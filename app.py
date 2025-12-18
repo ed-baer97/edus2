@@ -113,13 +113,20 @@ def run_scraper():
         
         # Запускаем основной процесс
         scraper_state['current_step'] = 'Авторизация'
-        scraper_state['message'] = 'Ожидание авторизации в браузере...'
+        
+        # Проверяем, есть ли учетные данные для автоматической авторизации
+        from config import LOGIN, PASSWORD
+        if LOGIN and PASSWORD:
+            scraper_state['message'] = 'Автоматическая авторизация...'
+        else:
+            scraper_state['message'] = 'Ожидание авторизации в браузере...'
+            scraper_state['auth_start_time'] = time.time()  # Запоминаем время начала ожидания только для ручной авторизации
+        
         scraper_state['progress'] = 10
-        scraper_state['auth_start_time'] = time.time()  # Запоминаем время начала ожидания
         
         # Открываем страницу и ждем авторизации
         if not scraper.login():
-            scraper_state['error'] = 'Не удалось авторизоваться'
+            scraper_state['error'] = 'Не удалось авторизоваться. Проверьте логин и пароль в переменных окружения.'
             scraper_state['running'] = False
             scraper_state['auth_start_time'] = None
             return

@@ -17,6 +17,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 from dotenv import load_dotenv
+import config
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -135,12 +136,139 @@ class MektepScraper:
             return False
     
     def login(self):
-        """Ожидание ручной авторизации пользователя с автоматической проверкой"""
+        """Авторизация: автоматическая (если есть логин/пароль) или ручная"""
         try:
             # Открываем страницу авторизации
             if not self.open_page(self.login_url):
                 return False
             
+            # Проверяем, есть ли логин и пароль для автоматической авторизации
+            login_cred = config.LOGIN
+            password_cred = config.PASSWORD
+            
+            if login_cred and password_cred:
+                # Автоматическая авторизация
+                print(f"\n{'='*60}")
+                print("Автоматическая авторизация...")
+                print(f"{'='*60}\n")
+                
+                try:
+                    # Ждем загрузки формы авторизации
+                    time.sleep(2)
+                    
+                    # Ищем поля для ввода логина и пароля
+                    # Пробуем разные варианты селекторов
+                    login_selectors = [
+                        (By.ID, "login"),
+                        (By.NAME, "login"),
+                        (By.CSS_SELECTOR, "input[type='text'][name*='login'], input[type='email'][name*='login']"),
+                        (By.CSS_SELECTOR, "input[type='text'], input[type='email']"),
+                        (By.XPATH, "//input[@type='text' or @type='email']"),
+                    ]
+                    
+                    password_selectors = [
+                        (By.ID, "password"),
+                        (By.NAME, "password"),
+                        (By.CSS_SELECTOR, "input[type='password']"),
+                        (By.XPATH, "//input[@type='password']"),
+                    ]
+                    
+                    submit_selectors = [
+                        (By.CSS_SELECTOR, "button[type='submit']"),
+                        (By.CSS_SELECTOR, "input[type='submit']"),
+                        (By.XPATH, "//button[contains(text(), 'Войти')]"),
+                        (By.XPATH, "//button[contains(text(), 'Вход')]"),
+                        (By.XPATH, "//input[@value='Войти']"),
+                        (By.XPATH, "//input[@value='Вход']"),
+                    ]
+                    
+                    # Находим поле логина
+                    login_field = None
+                    for selector_type, selector_value in login_selectors:
+                        try:
+                            login_field = self.driver.find_element(selector_type, selector_value)
+                            if login_field.is_displayed():
+                                break
+                        except NoSuchElementException:
+                            continue
+                    
+                    if not login_field:
+                        print("⚠ Не найдено поле для ввода логина, пробуем ручную авторизацию...")
+                        return self._manual_login()
+                    
+                    # Находим поле пароля
+                    password_field = None
+                    for selector_type, selector_value in password_selectors:
+                        try:
+                            password_field = self.driver.find_element(selector_type, selector_value)
+                            if password_field.is_displayed():
+                                break
+                        except NoSuchElementException:
+                            continue
+                    
+                    if not password_field:
+                        print("⚠ Не найдено поле для ввода пароля, пробуем ручную авторизацию...")
+                        return self._manual_login()
+                    
+                    # Вводим данные
+                    login_field.clear()
+                    login_field.send_keys(login_cred)
+                    time.sleep(0.5)
+                    
+                    password_field.clear()
+                    password_field.send_keys(password_cred)
+                    time.sleep(0.5)
+                    
+                    # Находим кнопку отправки
+                    submit_button = None
+                    for selector_type, selector_value in submit_selectors:
+                        try:
+                            submit_button = self.driver.find_element(selector_type, selector_value)
+                            if submit_button.is_displayed():
+                                break
+                        except NoSuchElementException:
+                            continue
+                    
+                    if not submit_button:
+                        # Пробуем отправить форму через Enter на поле пароля
+                        from selenium.webdriver.common.keys import Keys
+                        password_field.send_keys(Keys.RETURN)
+                    else:
+                        submit_button.click()
+                    
+                    # Ждем авторизации
+                    time.sleep(3)
+                    
+                    # Проверяем успешность авторизации
+                    max_attempts = 30  # 1 минута (30 * 2 секунды)
+                    attempt = 0
+                    
+                    while attempt < max_attempts:
+                        if self.check_authentication_quick():
+                            print("✓ Автоматическая авторизация успешна!")
+                            return True
+                        
+                        attempt += 1
+                        time.sleep(2)
+                    
+                    print("⚠ Автоматическая авторизация не удалась, возможно неверные данные")
+                    return False
+                    
+                except Exception as e:
+                    print(f"⚠ Ошибка при автоматической авторизации: {e}")
+                    print("Пробуем ручную авторизацию...")
+                    return self._manual_login()
+            else:
+                # Ручная авторизация
+                return self._manual_login()
+            
+        except Exception as e:
+            print(f"✗ Ошибка при авторизации: {e}")
+            return False
+    
+    def _manual_login(self):
+        """Ожидание ручной авторизации пользователя с автоматической проверкой"""
+        try:
             print(f"\n{'='*60}")
             print("Страница авторизации открыта в браузере")
             print("Пожалуйста, введите данные для авторизации вручную")
@@ -167,7 +295,7 @@ class MektepScraper:
             return False
             
         except Exception as e:
-            print(f"✗ Ошибка при авторизации: {e}")
+            print(f"✗ Ошибка при ручной авторизации: {e}")
             return False
     
     def check_authentication_quick(self):
