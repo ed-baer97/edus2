@@ -237,6 +237,8 @@ class MektepScraper:
             login_cred = config.LOGIN
             password_cred = config.PASSWORD
             
+            print(f"Проверка учетных данных: логин={'указан' if login_cred else 'не указан'}, пароль={'указан' if password_cred else 'не указан'}")
+            
             if login_cred and password_cred:
                 # Автоматическая авторизация
                 print(f"\n{'='*60}")
@@ -248,18 +250,31 @@ class MektepScraper:
                     time.sleep(2)
                     
                     # Ищем поля для ввода логина и пароля
-                    # Пробуем разные варианты селекторов
+                    # Пробуем разные варианты селекторов (расширенный список)
                     login_selectors = [
                         (By.ID, "login"),
                         (By.NAME, "login"),
+                        (By.NAME, "username"),
+                        (By.NAME, "email"),
+                        (By.ID, "username"),
+                        (By.ID, "email"),
+                        (By.CSS_SELECTOR, "input[name='login']"),
+                        (By.CSS_SELECTOR, "input[name='username']"),
+                        (By.CSS_SELECTOR, "input[name='email']"),
                         (By.CSS_SELECTOR, "input[type='text'][name*='login'], input[type='email'][name*='login']"),
-                        (By.CSS_SELECTOR, "input[type='text'], input[type='email']"),
+                        (By.CSS_SELECTOR, "input[type='text']:not([type='password'])"),
+                        (By.CSS_SELECTOR, "input[type='email']"),
                         (By.XPATH, "//input[@type='text' or @type='email']"),
+                        (By.XPATH, "//input[not(@type='password') and not(@type='submit') and not(@type='button')]"),
                     ]
                     
                     password_selectors = [
                         (By.ID, "password"),
                         (By.NAME, "password"),
+                        (By.NAME, "pass"),
+                        (By.ID, "pass"),
+                        (By.CSS_SELECTOR, "input[name='password']"),
+                        (By.CSS_SELECTOR, "input[name='pass']"),
                         (By.CSS_SELECTOR, "input[type='password']"),
                         (By.XPATH, "//input[@type='password']"),
                     ]
@@ -267,24 +282,41 @@ class MektepScraper:
                     submit_selectors = [
                         (By.CSS_SELECTOR, "button[type='submit']"),
                         (By.CSS_SELECTOR, "input[type='submit']"),
+                        (By.CSS_SELECTOR, "button.btn-primary"),
+                        (By.CSS_SELECTOR, "button.btn"),
                         (By.XPATH, "//button[contains(text(), 'Войти')]"),
                         (By.XPATH, "//button[contains(text(), 'Вход')]"),
+                        (By.XPATH, "//button[contains(., 'Войти')]"),
                         (By.XPATH, "//input[@value='Войти']"),
                         (By.XPATH, "//input[@value='Вход']"),
+                        (By.XPATH, "//button[@type='submit']"),
+                        (By.XPATH, "//input[@type='submit']"),
                     ]
                     
                     # Находим поле логина
                     login_field = None
+                    used_selector = None
                     for selector_type, selector_value in login_selectors:
                         try:
                             login_field = self.driver.find_element(selector_type, selector_value)
                             if login_field.is_displayed():
+                                used_selector = f"{selector_type}: {selector_value}"
+                                print(f"✓ Найдено поле логина: {used_selector}")
                                 break
-                        except NoSuchElementException:
+                        except (NoSuchElementException, Exception) as e:
                             continue
                     
                     if not login_field:
-                        print("⚠ Не найдено поле для ввода логина, пробуем ручную авторизацию...")
+                        print("⚠ Не найдено поле для ввода логина")
+                        print("Пробуем найти все input поля на странице для отладки...")
+                        try:
+                            all_inputs = self.driver.find_elements(By.TAG_NAME, "input")
+                            print(f"Найдено input полей на странице: {len(all_inputs)}")
+                            for inp in all_inputs[:5]:  # Показываем первые 5
+                                print(f"  - type={inp.get_attribute('type')}, name={inp.get_attribute('name')}, id={inp.get_attribute('id')}")
+                        except:
+                            pass
+                        print("Переходим к ручной авторизации...")
                         return self._manual_login()
                     
                     # Находим поле пароля
@@ -293,8 +325,9 @@ class MektepScraper:
                         try:
                             password_field = self.driver.find_element(selector_type, selector_value)
                             if password_field.is_displayed():
+                                print(f"✓ Найдено поле пароля: {selector_type}: {selector_value}")
                                 break
-                        except NoSuchElementException:
+                        except (NoSuchElementException, Exception):
                             continue
                     
                     if not password_field:
@@ -351,6 +384,19 @@ class MektepScraper:
                     return self._manual_login()
             else:
                 # Ручная авторизация
+                print("\n" + "="*60)
+                print("АВТОМАТИЧЕСКАЯ АВТОРИЗАЦИЯ НЕВОЗМОЖНА")
+                print("="*60)
+                print("Причина: не указаны логин и/или пароль в переменных окружения")
+                print("\nДля автоматической авторизации:")
+                print("1. Создайте файл .env в корне проекта")
+                print("2. Добавьте строки:")
+                print("   EDUS_LOGIN=ваш_логин@example.com")
+                print("   EDUS_PASSWORD=ваш_пароль")
+                print("\nИли установите переменные окружения:")
+                print("   EDUS_LOGIN=ваш_логин")
+                print("   EDUS_PASSWORD=ваш_пароль")
+                print("="*60 + "\n")
                 return self._manual_login()
             
         except Exception as e:
