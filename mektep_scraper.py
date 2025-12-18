@@ -13,146 +13,57 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException
-from webdriver_manager.chrome import ChromeDriverManager
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 from dotenv import load_dotenv
-import config
 
 # Загружаем переменные окружения
 load_dotenv()
 
 class MektepScraper:
-    def __init__(self):
+    def __init__(self, login=None, password=None):
         """Инициализация парсера"""
         self.base_url = "https://mektep.edu.kz/_monitor/"
         self.login_url = f"{self.base_url}index.php"
         self.driver = None
         self.wait = None
         self.data = {}  # {parallel: {class_name: table_data}}
+        self.login_credential = login  # Логин для авторизации
+        self.password_credential = password  # Пароль для авторизации
         
     def setup_driver(self):
         """Настройка браузера Chrome"""
         chrome_options = Options()
+        # Отключаем автоматизацию
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
         
         # Проверяем, запущено ли в headless режиме (для Render и других серверов)
-        # Используем config.HEADLESS, который учитывает переменные окружения
-        is_headless = config.HEADLESS
-        
-        # Отладочный вывод
-        print(f"Режим запуска: {'HEADLESS' if is_headless else 'ОБЫЧНЫЙ (браузер откроется)'}")
+        # По умолчанию включаем headless режим, так как авторизация теперь автоматическая
+        is_headless = os.getenv('HEADLESS', 'true').lower() == 'true'
         if is_headless:
-            print("⚠ Внимание: Браузер работает в headless режиме и не будет виден")
-        else:
-            print("✓ Браузер откроется в обычном режиме")
-        
-        if is_headless:
-            # Опции для headless режима (Render, серверы)
-            chrome_options.add_argument("--headless=new")  # Новый headless режим
-            chrome_options.add_argument("--no-sandbox")  # Обязательно для Docker/Render
-            chrome_options.add_argument("--disable-dev-shm-usage")  # Обязательно для ограниченной памяти
+            chrome_options.add_argument("--headless")
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
             chrome_options.add_argument("--disable-gpu")
             chrome_options.add_argument("--window-size=1920,1080")
-            chrome_options.add_argument("--disable-software-rasterizer")
-            chrome_options.add_argument("--disable-extensions")
-            chrome_options.add_argument("--disable-background-timer-throttling")
-            chrome_options.add_argument("--disable-backgrounding-occluded-windows")
-            chrome_options.add_argument("--disable-renderer-backgrounding")
-            chrome_options.add_argument("--disable-features=TranslateUI")
-            chrome_options.add_argument("--disable-ipc-flooding-protection")
-            chrome_options.add_argument("--disable-hang-monitor")
-            chrome_options.add_argument("--disable-prompt-on-repost")
-            chrome_options.add_argument("--disable-sync")
-            chrome_options.add_argument("--disable-features=VizDisplayCompositor")
-            chrome_options.add_argument("--disable-setuid-sandbox")
-            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-            # Не используем --single-process, так как это может вызывать проблемы
         else:
-            # Опции для обычного режима (локальная разработка)
             chrome_options.add_argument("--start-maximized")
-            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-            chrome_options.add_experimental_option('useAutomationExtension', False)
-            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-            chrome_options.add_argument("--disable-extensions")
-            chrome_options.add_argument("--disable-software-rasterizer")
-            chrome_options.add_argument("--disable-background-timer-throttling")
-            chrome_options.add_argument("--disable-backgrounding-occluded-windows")
-            chrome_options.add_argument("--disable-renderer-backgrounding")
         
-        # Дополнительные опции для стабильности (общие)
-        chrome_options.add_argument("--disable-infobars")
-        chrome_options.add_argument("--disable-notifications")
-        chrome_options.add_argument("--disable-popup-blocking")
-        # Отключаем remote debugging для production (может вызывать проблемы)
-        # chrome_options.add_argument("--remote-debugging-port=9222")
+        # Дополнительные опции для стабильности
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-software-rasterizer")
+        chrome_options.add_argument("--disable-background-timer-throttling")
+        chrome_options.add_argument("--disable-backgrounding-occluded-windows")
+        chrome_options.add_argument("--disable-renderer-backgrounding")
         
-        # Устанавливаем binary путь для Chrome (если доступен)
-        chrome_binary_paths = [
-            "/usr/bin/google-chrome",
-            "/usr/bin/google-chrome-stable",
-            "/usr/bin/chromium-browser",
-            "/usr/bin/chromium"
-        ]
-        
-        for path in chrome_binary_paths:
-            if os.path.exists(path):
-                chrome_options.binary_location = path
-                print(f"✓ Найден Chrome: {path}")
-                break
-        
-        try:
-            # Пробуем использовать webdriver-manager для автоматической установки ChromeDriver
-            try:
-                service = Service(ChromeDriverManager().install())
-                self.driver = webdriver.Chrome(service=service, options=chrome_options)
-                print("✓ ChromeDriver установлен через webdriver-manager")
-            except Exception as e:
-                print(f"⚠ webdriver-manager не сработал: {e}")
-                print("Пробуем стандартный способ...")
-                # Пробуем стандартный способ (ChromeDriver должен быть в PATH)
-                try:
-                    self.driver = webdriver.Chrome(options=chrome_options)
-                    print("✓ ChromeDriver найден в PATH")
-                except Exception as e2:
-                    print(f"⚠ Стандартный способ не сработал: {e2}")
-                    # Последняя попытка - без service
-                    raise Exception(f"Не удалось запустить Chrome: {e2}")
-            
-            self.wait = WebDriverWait(self.driver, 30)
-            # Устанавливаем таймаут загрузки страницы
-            self.driver.set_page_load_timeout(30)
-            print("✓ Браузер запущен успешно")
-            
-        except Exception as e:
-            error_msg = str(e)
-            print(f"✗ Ошибка при запуске браузера: {error_msg}")
-            
-            # Пробуем с минимальными опциями как последний вариант
-            print("Пробуем запустить с минимальными опциями...")
-            minimal_options = Options()
-            minimal_options.add_argument("--headless=new")
-            minimal_options.add_argument("--no-sandbox")
-            minimal_options.add_argument("--disable-dev-shm-usage")
-            minimal_options.add_argument("--disable-gpu")
-            
-            if chrome_options.binary_location:
-                minimal_options.binary_location = chrome_options.binary_location
-            
-            try:
-                self.driver = webdriver.Chrome(options=minimal_options)
-                self.wait = WebDriverWait(self.driver, 30)
-                self.driver.set_page_load_timeout(30)
-                print("✓ Браузер запущен с минимальными опциями")
-            except Exception as e2:
-                error_msg2 = str(e2)
-                print(f"✗ Критическая ошибка: не удалось запустить браузер даже с минимальными опциями")
-                print(f"Детали ошибки: {error_msg2}")
-                print("\nВозможные решения:")
-                print("1. Убедитесь, что Chrome установлен: google-chrome --version")
-                print("2. Проверьте, что ChromeDriver доступен")
-                print("3. Проверьте логи сборки на Render")
-                raise Exception(f"Не удалось запустить Chrome. Первая ошибка: {error_msg}. Вторая ошибка: {error_msg2}")
+        self.driver = webdriver.Chrome(options=chrome_options)
+        self.wait = WebDriverWait(self.driver, 30)
+        # Устанавливаем таймаут загрузки страницы
+        self.driver.set_page_load_timeout(30)
+        print("✓ Браузер запущен")
     
     def open_page(self, url):
         """Открытие страницы с умным ожиданием полной загрузки"""
@@ -227,212 +138,159 @@ class MektepScraper:
             return False
     
     def login(self):
-        """Авторизация: автоматическая (если есть логин/пароль) или ручная"""
+        """Автоматическая авторизация с использованием логина и пароля"""
         try:
+            # Проверяем наличие учетных данных
+            if not self.login_credential or not self.password_credential:
+                print("✗ Логин и пароль не указаны")
+                return False
+            
             # Открываем страницу авторизации
             if not self.open_page(self.login_url):
                 return False
             
-            # Проверяем, есть ли логин и пароль для автоматической авторизации
-            login_cred = config.LOGIN
-            password_cred = config.PASSWORD
-            
-            print(f"Проверка учетных данных: логин={'указан' if login_cred else 'не указан'}, пароль={'указан' if password_cred else 'не указан'}")
-            
-            if login_cred and password_cred:
-                # Автоматическая авторизация
-                print(f"\n{'='*60}")
-                print("Автоматическая авторизация...")
-                print(f"{'='*60}\n")
-                
-                try:
-                    # Ждем загрузки формы авторизации
-                    time.sleep(2)
-                    
-                    # Ищем поля для ввода логина и пароля
-                    # Пробуем разные варианты селекторов (расширенный список)
-                    login_selectors = [
-                        (By.ID, "login"),
-                        (By.NAME, "login"),
-                        (By.NAME, "username"),
-                        (By.NAME, "email"),
-                        (By.ID, "username"),
-                        (By.ID, "email"),
-                        (By.CSS_SELECTOR, "input[name='login']"),
-                        (By.CSS_SELECTOR, "input[name='username']"),
-                        (By.CSS_SELECTOR, "input[name='email']"),
-                        (By.CSS_SELECTOR, "input[type='text'][name*='login'], input[type='email'][name*='login']"),
-                        (By.CSS_SELECTOR, "input[type='text']:not([type='password'])"),
-                        (By.CSS_SELECTOR, "input[type='email']"),
-                        (By.XPATH, "//input[@type='text' or @type='email']"),
-                        (By.XPATH, "//input[not(@type='password') and not(@type='submit') and not(@type='button')]"),
-                    ]
-                    
-                    password_selectors = [
-                        (By.ID, "password"),
-                        (By.NAME, "password"),
-                        (By.NAME, "pass"),
-                        (By.ID, "pass"),
-                        (By.CSS_SELECTOR, "input[name='password']"),
-                        (By.CSS_SELECTOR, "input[name='pass']"),
-                        (By.CSS_SELECTOR, "input[type='password']"),
-                        (By.XPATH, "//input[@type='password']"),
-                    ]
-                    
-                    submit_selectors = [
-                        (By.CSS_SELECTOR, "button[type='submit']"),
-                        (By.CSS_SELECTOR, "input[type='submit']"),
-                        (By.CSS_SELECTOR, "button.btn-primary"),
-                        (By.CSS_SELECTOR, "button.btn"),
-                        (By.XPATH, "//button[contains(text(), 'Войти')]"),
-                        (By.XPATH, "//button[contains(text(), 'Вход')]"),
-                        (By.XPATH, "//button[contains(., 'Войти')]"),
-                        (By.XPATH, "//input[@value='Войти']"),
-                        (By.XPATH, "//input[@value='Вход']"),
-                        (By.XPATH, "//button[@type='submit']"),
-                        (By.XPATH, "//input[@type='submit']"),
-                    ]
-                    
-                    # Находим поле логина
-                    login_field = None
-                    used_selector = None
-                    for selector_type, selector_value in login_selectors:
-                        try:
-                            login_field = self.driver.find_element(selector_type, selector_value)
-                            if login_field.is_displayed():
-                                used_selector = f"{selector_type}: {selector_value}"
-                                print(f"✓ Найдено поле логина: {used_selector}")
-                                break
-                        except (NoSuchElementException, Exception) as e:
-                            continue
-                    
-                    if not login_field:
-                        print("⚠ Не найдено поле для ввода логина")
-                        print("Пробуем найти все input поля на странице для отладки...")
-                        try:
-                            all_inputs = self.driver.find_elements(By.TAG_NAME, "input")
-                            print(f"Найдено input полей на странице: {len(all_inputs)}")
-                            for inp in all_inputs[:5]:  # Показываем первые 5
-                                print(f"  - type={inp.get_attribute('type')}, name={inp.get_attribute('name')}, id={inp.get_attribute('id')}")
-                        except:
-                            pass
-                        print("Переходим к ручной авторизации...")
-                        return self._manual_login()
-                    
-                    # Находим поле пароля
-                    password_field = None
-                    for selector_type, selector_value in password_selectors:
-                        try:
-                            password_field = self.driver.find_element(selector_type, selector_value)
-                            if password_field.is_displayed():
-                                print(f"✓ Найдено поле пароля: {selector_type}: {selector_value}")
-                                break
-                        except (NoSuchElementException, Exception):
-                            continue
-                    
-                    if not password_field:
-                        print("⚠ Не найдено поле для ввода пароля, пробуем ручную авторизацию...")
-                        return self._manual_login()
-                    
-                    # Вводим данные
-                    login_field.clear()
-                    login_field.send_keys(login_cred)
-                    time.sleep(0.5)
-                    
-                    password_field.clear()
-                    password_field.send_keys(password_cred)
-                    time.sleep(0.5)
-                    
-                    # Находим кнопку отправки
-                    submit_button = None
-                    for selector_type, selector_value in submit_selectors:
-                        try:
-                            submit_button = self.driver.find_element(selector_type, selector_value)
-                            if submit_button.is_displayed():
-                                break
-                        except NoSuchElementException:
-                            continue
-                    
-                    if not submit_button:
-                        # Пробуем отправить форму через Enter на поле пароля
-                        from selenium.webdriver.common.keys import Keys
-                        password_field.send_keys(Keys.RETURN)
-                    else:
-                        submit_button.click()
-                    
-                    # Ждем авторизации
-                    time.sleep(3)
-                    
-                    # Проверяем успешность авторизации
-                    max_attempts = 30  # 1 минута (30 * 2 секунды)
-                    attempt = 0
-                    
-                    while attempt < max_attempts:
-                        if self.check_authentication_quick():
-                            print("✓ Автоматическая авторизация успешна!")
-                            return True
-                        
-                        attempt += 1
-                        time.sleep(2)
-                    
-                    print("⚠ Автоматическая авторизация не удалась, возможно неверные данные")
-                    return False
-                    
-                except Exception as e:
-                    print(f"⚠ Ошибка при автоматической авторизации: {e}")
-                    print("Пробуем ручную авторизацию...")
-                    return self._manual_login()
-            else:
-                # Ручная авторизация
-                print("\n" + "="*60)
-                print("АВТОМАТИЧЕСКАЯ АВТОРИЗАЦИЯ НЕВОЗМОЖНА")
-                print("="*60)
-                print("Причина: не указаны логин и/или пароль в переменных окружения")
-                print("\nДля автоматической авторизации:")
-                print("1. Создайте файл .env в корне проекта")
-                print("2. Добавьте строки:")
-                print("   EDUS_LOGIN=ваш_логин@example.com")
-                print("   EDUS_PASSWORD=ваш_пароль")
-                print("\nИли установите переменные окружения:")
-                print("   EDUS_LOGIN=ваш_логин")
-                print("   EDUS_PASSWORD=ваш_пароль")
-                print("="*60 + "\n")
-                return self._manual_login()
-            
-        except Exception as e:
-            print(f"✗ Ошибка при авторизации: {e}")
-            return False
-    
-    def _manual_login(self):
-        """Ожидание ручной авторизации пользователя с автоматической проверкой"""
-        try:
             print(f"\n{'='*60}")
-            print("Страница авторизации открыта в браузере")
-            print("Пожалуйста, введите данные для авторизации вручную")
-            print("Ожидание авторизации...")
+            print("Выполняется автоматическая авторизация...")
             print(f"{'='*60}\n")
             
-            # Автоматически проверяем авторизацию каждые 2 секунды
-            max_attempts = 300  # Максимум 10 минут ожидания (300 * 2 секунды)
+            # Ждем загрузки страницы
+            time.sleep(2)
+            
+            # Ищем поля для ввода логина и пароля
+            # Пробуем разные варианты селекторов
+            login_selectors = [
+                "input[name='login']",
+                "input[name='username']",
+                "input[name='email']",
+                "input[type='text']",
+                "input[id*='login']",
+                "input[id*='user']",
+                "#login",
+                "#username",
+                "#email"
+            ]
+            
+            password_selectors = [
+                "input[name='password']",
+                "input[type='password']",
+                "input[id*='password']",
+                "#password"
+            ]
+            
+            submit_selectors = [
+                "button[type='submit']",
+                "input[type='submit']",
+                "button:contains('Войти')",
+                "button:contains('Вход')",
+                "button:contains('Login')",
+                "input[value*='Войти']",
+                "input[value*='Вход']"
+            ]
+            
+            login_field = None
+            password_field = None
+            submit_button = None
+            
+            # Ищем поле логина
+            for selector in login_selectors:
+                try:
+                    login_field = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    if login_field.is_displayed():
+                        break
+                except NoSuchElementException:
+                    continue
+            
+            # Ищем поле пароля
+            for selector in password_selectors:
+                try:
+                    password_field = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    if password_field.is_displayed():
+                        break
+                except NoSuchElementException:
+                    continue
+            
+            # Ищем кнопку отправки
+            for selector in submit_selectors:
+                try:
+                    submit_button = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    if submit_button.is_displayed():
+                        break
+                except NoSuchElementException:
+                    continue
+            
+            # Если не нашли стандартными селекторами, пробуем найти по XPath
+            if not login_field:
+                try:
+                    login_field = self.driver.find_element(By.XPATH, "//input[contains(@placeholder, 'логин') or contains(@placeholder, 'email') or contains(@placeholder, 'Логин')]")
+                except NoSuchElementException:
+                    pass
+            
+            if not password_field:
+                try:
+                    password_field = self.driver.find_element(By.XPATH, "//input[@type='password']")
+                except NoSuchElementException:
+                    pass
+            
+            if not submit_button:
+                try:
+                    submit_button = self.driver.find_element(By.XPATH, "//button[contains(text(), 'Войти') or contains(text(), 'Вход')] | //input[@type='submit']")
+                except NoSuchElementException:
+                    pass
+            
+            # Проверяем, что все элементы найдены
+            if not login_field:
+                print("✗ Не найдено поле для ввода логина")
+                return False
+            
+            if not password_field:
+                print("✗ Не найдено поле для ввода пароля")
+                return False
+            
+            if not submit_button:
+                print("✗ Не найдена кнопка отправки формы")
+                return False
+            
+            # Заполняем форму
+            print("Заполнение формы авторизации...")
+            login_field.clear()
+            login_field.send_keys(self.login_credential)
+            time.sleep(0.5)
+            
+            password_field.clear()
+            password_field.send_keys(self.password_credential)
+            time.sleep(0.5)
+            
+            # Нажимаем кнопку отправки
+            print("Отправка формы...")
+            try:
+                submit_button.click()
+            except Exception:
+                # Если клик не сработал, пробуем через JavaScript
+                self.driver.execute_script("arguments[0].click();", submit_button)
+            
+            # Ждем авторизации (проверяем каждые 2 секунды)
+            max_attempts = 60  # Максимум 2 минуты ожидания
             attempt = 0
             
             while attempt < max_attempts:
-                # Быстрая проверка авторизации
+                time.sleep(2)
+                
+                # Проверяем авторизацию
                 if self.check_authentication_quick():
                     print("✓ Авторизация успешна!")
                     return True
                 
                 attempt += 1
-                if attempt % 15 == 0:  # Каждые 30 секунд выводим сообщение
-                    print(f"Ожидание авторизации... (попытка {attempt}/{max_attempts})")
-                
-                time.sleep(2)  # Ждем 2 секунды перед следующей проверкой
+                if attempt % 5 == 0:  # Каждые 10 секунд выводим сообщение
+                    print(f"Ожидание завершения авторизации... ({attempt * 2} сек)")
             
             print("✗ Превышено время ожидания авторизации")
             return False
             
         except Exception as e:
-            print(f"✗ Ошибка при ручной авторизации: {e}")
+            print(f"✗ Ошибка при авторизации: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def check_authentication_quick(self):

@@ -1,9 +1,10 @@
 // Глобальные переменные
-let currentStep = 1;
+let currentStep = 0;  // Начинаем с шага 0 (авторизация)
 let statusInterval = null;
 let logsInterval = null;
 let logsExpanded = false;
 let authTimerInterval = null;  // Интервал для таймера авторизации
+let credentialsSaved = false;  // Флаг сохранения учетных данных
 
 // Инициализация
 document.addEventListener('DOMContentLoaded', function() {
@@ -14,6 +15,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(response => response.json())
         .then(data => {
             console.log('API подключен:', data);
+            checkCredentialsStatus();
             updateStatus();
             loadLogs();
             
@@ -25,6 +27,86 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Ошибка подключения к API:', error);
         });
 });
+
+// Проверка статуса учетных данных
+async function checkCredentialsStatus() {
+    try {
+        const response = await fetch('/api/credentials');
+        const data = await response.json();
+        
+        if (data.has_credentials) {
+            credentialsSaved = true;
+            showStep(1);  // Переходим к шагу запуска
+            const statusBox = document.getElementById('credentials-status');
+            if (statusBox) {
+                statusBox.style.display = 'flex';
+            }
+        } else {
+            showStep(0);  // Показываем форму авторизации
+        }
+    } catch (error) {
+        console.error('Ошибка при проверке учетных данных:', error);
+        showStep(0);  // В случае ошибки показываем форму
+    }
+}
+
+// Сохранение учетных данных
+async function saveCredentials(event) {
+    event.preventDefault();
+    
+    const login = document.getElementById('login-input').value.trim();
+    const password = document.getElementById('password-input').value.trim();
+    
+    if (!login || !password) {
+        alert('Пожалуйста, заполните все поля');
+        return;
+    }
+    
+    const saveBtn = document.getElementById('save-credentials-btn');
+    if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Сохранение...';
+    }
+    
+    try {
+        const response = await fetch('/api/credentials', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ login, password })
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+            credentialsSaved = true;
+            addLog('SYSTEM', 'Учетные данные сохранены', 'success');
+            
+            const statusBox = document.getElementById('credentials-status');
+            if (statusBox) {
+                statusBox.style.display = 'flex';
+                statusBox.className = 'status-box success';
+            }
+            
+            // Переходим к следующему шагу через небольшую задержку
+            setTimeout(() => {
+                showStep(1);
+            }, 500);
+        } else {
+            alert('Ошибка: ' + (result.error || 'Не удалось сохранить учетные данные'));
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.innerHTML = '<i class="fas fa-save"></i> Сохранить и продолжить';
+            }
+        }
+    } catch (error) {
+        console.error('Ошибка при сохранении:', error);
+        alert('Ошибка при сохранении учетных данных');
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '<i class="fas fa-save"></i> Сохранить и продолжить';
+        }
+    }
+}
 
 // Обновление статуса
 async function updateStatus() {
@@ -160,8 +242,10 @@ async function updateStatus() {
                 if (authTimer) {
                     authTimer.textContent = '0';
                 }
-                if (currentStep !== 1) {
+                if (currentStep !== 1 && credentialsSaved) {
                     showStep(1);
+                } else if (!credentialsSaved) {
+                    showStep(0);
                 }
             } else {
                 statusBox.className = 'status-box';
@@ -190,6 +274,18 @@ async function updateStatus() {
 // Запуск процесса
 async function startProcess() {
     try {
+        // Проверяем наличие учетных данных перед запуском
+        if (!credentialsSaved) {
+            const response = await fetch('/api/credentials');
+            const data = await response.json();
+            if (!data.has_credentials) {
+                alert('Пожалуйста, сначала введите учетные данные');
+                showStep(0);
+                return;
+            }
+            credentialsSaved = true;
+        }
+        
         const startBtn = document.getElementById('start-btn');
         if (startBtn) {
             startBtn.disabled = true;
@@ -206,7 +302,7 @@ async function startProcess() {
             addLog('SYSTEM', 'Процесс запущен', 'info');
             showStep(1);
         } else {
-            alert('Ошибка: ' + result.error);
+            alert('Ошибка: ' + (result.error || 'Не удалось запустить процесс'));
             if (startBtn) {
                 startBtn.disabled = false;
             }
@@ -224,7 +320,7 @@ async function startProcess() {
 // Отображение шагов
 function showStep(stepNumber) {
     // Скрываем все шаги
-    for (let i = 1; i <= 4; i++) {
+    for (let i = 0; i <= 4; i++) {
         const step = document.getElementById(`step-${i}`);
         if (step) {
             step.classList.remove('active');
@@ -469,8 +565,14 @@ async function restartProcess() {
         console.log('Состояние сброшено:', result);
         
         // Сбрасываем локальное состояние
-        currentStep = 1;
-        showStep(1);
+        // НЕ сбрасываем учетные данные, только переходим к шагу запуска
+        if (credentialsSaved) {
+            currentStep = 1;
+            showStep(1);
+        } else {
+            currentStep = 0;
+            showStep(0);
+        }
         
         // Сбрасываем UI элементы
         const startBtn = document.getElementById('start-btn');

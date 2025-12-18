@@ -38,7 +38,9 @@ scraper_state = {
     'scraper': None,
     'thread': None,
     'logs': [],
-    'auth_start_time': None  # Время начала ожидания авторизации
+    'auth_start_time': None,  # Время начала ожидания авторизации
+    'login': None,  # Сохраненный логин
+    'password': None  # Сохраненный пароль
 }
 
 # Папка для файлов
@@ -106,29 +108,33 @@ def run_scraper():
         
         add_log('SCRAPER', 'Запуск скрапера', 'info')
         
-        # Создаем экземпляр скрапера
-        scraper = MektepScraper()
+        # Проверяем наличие учетных данных
+        login = scraper_state.get('login')
+        password = scraper_state.get('password')
+        
+        if not login or not password:
+            scraper_state['error'] = 'Логин и пароль не указаны. Пожалуйста, введите учетные данные перед запуском.'
+            scraper_state['running'] = False
+            add_log('SCRAPER', 'Ошибка: логин и пароль не указаны', 'error')
+            return
+        
+        # Создаем экземпляр скрапера с учетными данными
+        scraper = MektepScraper(login=login, password=password)
         scraper.setup_driver()
         scraper_state['scraper'] = scraper
         
         # Запускаем основной процесс
         scraper_state['current_step'] = 'Авторизация'
-        
-        # Проверяем, есть ли учетные данные для автоматической авторизации
-        from config import LOGIN, PASSWORD
-        if LOGIN and PASSWORD:
-            scraper_state['message'] = 'Автоматическая авторизация...'
-        else:
-            scraper_state['message'] = 'Ожидание авторизации в браузере...'
-            scraper_state['auth_start_time'] = time.time()  # Запоминаем время начала ожидания только для ручной авторизации
-        
+        scraper_state['message'] = 'Выполняется автоматическая авторизация...'
         scraper_state['progress'] = 10
+        scraper_state['auth_start_time'] = time.time()  # Запоминаем время начала ожидания
         
-        # Открываем страницу и ждем авторизации
+        # Открываем страницу и выполняем авторизацию
         if not scraper.login():
-            scraper_state['error'] = 'Не удалось авторизоваться. Проверьте логин и пароль в переменных окружения.'
+            scraper_state['error'] = 'Не удалось авторизоваться. Проверьте правильность логина и пароля.'
             scraper_state['running'] = False
             scraper_state['auth_start_time'] = None
+            add_log('SCRAPER', 'Ошибка авторизации', 'error')
             return
         
         scraper_state['auth_start_time'] = None  # Сбрасываем после успешной авторизации
@@ -686,6 +692,31 @@ def api_logs():
     return jsonify({'logs': scraper_state['logs']})
 
 
+@app.route('/api/credentials', methods=['POST'])
+def api_save_credentials():
+    """Сохранение учетных данных"""
+    data = request.get_json()
+    login = data.get('login', '').strip()
+    password = data.get('password', '').strip()
+    
+    if not login or not password:
+        return jsonify({'error': 'Логин и пароль обязательны'}), 400
+    
+    scraper_state['login'] = login
+    scraper_state['password'] = password
+    
+    add_log('SYSTEM', 'Учетные данные сохранены', 'success')
+    
+    return jsonify({'status': 'ok', 'message': 'Учетные данные сохранены'})
+
+
+@app.route('/api/credentials', methods=['GET'])
+def api_get_credentials_status():
+    """Проверка наличия учетных данных (без возврата самих данных)"""
+    has_credentials = bool(scraper_state.get('login') and scraper_state.get('password'))
+    return jsonify({'has_credentials': has_credentials})
+
+
 @app.route('/api/reset', methods=['POST'])
 def api_reset():
     """Сброс состояния"""
@@ -702,6 +733,7 @@ def api_reset():
     scraper_state['selected_class'] = None
     scraper_state['logs'] = []
     scraper_state['auth_start_time'] = None
+    # НЕ сбрасываем логин и пароль при сбросе состояния
     
     # Закрываем браузер, если открыт
     if scraper_state['scraper']:
