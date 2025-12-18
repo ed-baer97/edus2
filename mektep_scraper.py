@@ -37,7 +37,15 @@ class MektepScraper:
         chrome_options = Options()
         
         # Проверяем, запущено ли в headless режиме (для Render и других серверов)
-        is_headless = os.getenv('HEADLESS', 'false').lower() == 'true'
+        # Используем config.HEADLESS, который учитывает переменные окружения
+        is_headless = config.HEADLESS
+        
+        # Отладочный вывод
+        print(f"Режим запуска: {'HEADLESS' if is_headless else 'ОБЫЧНЫЙ (браузер откроется)'}")
+        if is_headless:
+            print("⚠ Внимание: Браузер работает в headless режиме и не будет виден")
+        else:
+            print("✓ Браузер откроется в обычном режиме")
         
         if is_headless:
             # Опции для headless режима (Render, серверы)
