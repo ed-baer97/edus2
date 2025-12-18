@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: edus2-monitoring
+    env: python
+    buildCommand: chmod +x build.sh && ./build.sh
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --threads 2 --timeout 300
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: HEADLESS
+        value: true
+      - key: EDUS_LOGIN
+        sync: false  # Установите вручную в настройках Render
+      - key: EDUS_PASSWORD
+        sync: false  # Установите вручную в настройках Render
+      - key: FLASK_ENV
+        value: production
+      - key: SECRET_KEY
+        generateValue: true
