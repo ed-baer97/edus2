@@ -13,6 +13,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException
+from webdriver_manager.chrome import ChromeDriverManager
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
@@ -34,34 +35,116 @@ class MektepScraper:
     def setup_driver(self):
         """Настройка браузера Chrome"""
         chrome_options = Options()
-        # Отключаем автоматизацию
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
-        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
         
         # Проверяем, запущено ли в headless режиме (для Render и других серверов)
         is_headless = os.getenv('HEADLESS', 'false').lower() == 'true'
+        
         if is_headless:
-            chrome_options.add_argument("--headless")
-            chrome_options.add_argument("--no-sandbox")
-            chrome_options.add_argument("--disable-dev-shm-usage")
+            # Опции для headless режима (Render, серверы)
+            chrome_options.add_argument("--headless=new")  # Новый headless режим
+            chrome_options.add_argument("--no-sandbox")  # Обязательно для Docker/Render
+            chrome_options.add_argument("--disable-dev-shm-usage")  # Обязательно для ограниченной памяти
             chrome_options.add_argument("--disable-gpu")
             chrome_options.add_argument("--window-size=1920,1080")
+            chrome_options.add_argument("--disable-software-rasterizer")
+            chrome_options.add_argument("--disable-extensions")
+            chrome_options.add_argument("--disable-background-timer-throttling")
+            chrome_options.add_argument("--disable-backgrounding-occluded-windows")
+            chrome_options.add_argument("--disable-renderer-backgrounding")
+            chrome_options.add_argument("--disable-features=TranslateUI")
+            chrome_options.add_argument("--disable-ipc-flooding-protection")
+            chrome_options.add_argument("--disable-hang-monitor")
+            chrome_options.add_argument("--disable-prompt-on-repost")
+            chrome_options.add_argument("--disable-sync")
+            chrome_options.add_argument("--disable-features=VizDisplayCompositor")
+            chrome_options.add_argument("--disable-setuid-sandbox")
+            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            # Не используем --single-process, так как это может вызывать проблемы
         else:
+            # Опции для обычного режима (локальная разработка)
             chrome_options.add_argument("--start-maximized")
+            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            chrome_options.add_experimental_option('useAutomationExtension', False)
+            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            chrome_options.add_argument("--disable-extensions")
+            chrome_options.add_argument("--disable-software-rasterizer")
+            chrome_options.add_argument("--disable-background-timer-throttling")
+            chrome_options.add_argument("--disable-backgrounding-occluded-windows")
+            chrome_options.add_argument("--disable-renderer-backgrounding")
         
-        # Дополнительные опции для стабильности
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--disable-software-rasterizer")
-        chrome_options.add_argument("--disable-background-timer-throttling")
-        chrome_options.add_argument("--disable-backgrounding-occluded-windows")
-        chrome_options.add_argument("--disable-renderer-backgrounding")
+        # Дополнительные опции для стабильности (общие)
+        chrome_options.add_argument("--disable-infobars")
+        chrome_options.add_argument("--disable-notifications")
+        chrome_options.add_argument("--disable-popup-blocking")
+        # Отключаем remote debugging для production (может вызывать проблемы)
+        # chrome_options.add_argument("--remote-debugging-port=9222")
         
-        self.driver = webdriver.Chrome(options=chrome_options)
-        self.wait = WebDriverWait(self.driver, 30)
-        # Устанавливаем таймаут загрузки страницы
-        self.driver.set_page_load_timeout(30)
-        print("✓ Браузер запущен")
+        # Устанавливаем binary путь для Chrome (если доступен)
+        chrome_binary_paths = [
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/chromium-browser",
+            "/usr/bin/chromium"
+        ]
+        
+        for path in chrome_binary_paths:
+            if os.path.exists(path):
+                chrome_options.binary_location = path
+                print(f"✓ Найден Chrome: {path}")
+                break
+        
+        try:
+            # Пробуем использовать webdriver-manager для автоматической установки ChromeDriver
+            try:
+                service = Service(ChromeDriverManager().install())
+                self.driver = webdriver.Chrome(service=service, options=chrome_options)
+                print("✓ ChromeDriver установлен через webdriver-manager")
+            except Exception as e:
+                print(f"⚠ webdriver-manager не сработал: {e}")
+                print("Пробуем стандартный способ...")
+                # Пробуем стандартный способ (ChromeDriver должен быть в PATH)
+                try:
+                    self.driver = webdriver.Chrome(options=chrome_options)
+                    print("✓ ChromeDriver найден в PATH")
+                except Exception as e2:
+                    print(f"⚠ Стандартный способ не сработал: {e2}")
+                    # Последняя попытка - без service
+                    raise Exception(f"Не удалось запустить Chrome: {e2}")
+            
+            self.wait = WebDriverWait(self.driver, 30)
+            # Устанавливаем таймаут загрузки страницы
+            self.driver.set_page_load_timeout(30)
+            print("✓ Браузер запущен успешно")
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"✗ Ошибка при запуске браузера: {error_msg}")
+            
+            # Пробуем с минимальными опциями как последний вариант
+            print("Пробуем запустить с минимальными опциями...")
+            minimal_options = Options()
+            minimal_options.add_argument("--headless=new")
+            minimal_options.add_argument("--no-sandbox")
+            minimal_options.add_argument("--disable-dev-shm-usage")
+            minimal_options.add_argument("--disable-gpu")
+            
+            if chrome_options.binary_location:
+                minimal_options.binary_location = chrome_options.binary_location
+            
+            try:
+                self.driver = webdriver.Chrome(options=minimal_options)
+                self.wait = WebDriverWait(self.driver, 30)
+                self.driver.set_page_load_timeout(30)
+                print("✓ Браузер запущен с минимальными опциями")
+            except Exception as e2:
+                error_msg2 = str(e2)
+                print(f"✗ Критическая ошибка: не удалось запустить браузер даже с минимальными опциями")
+                print(f"Детали ошибки: {error_msg2}")
+                print("\nВозможные решения:")
+                print("1. Убедитесь, что Chrome установлен: google-chrome --version")
+                print("2. Проверьте, что ChromeDriver доступен")
+                print("3. Проверьте логи сборки на Render")
+                raise Exception(f"Не удалось запустить Chrome. Первая ошибка: {error_msg}. Вторая ошибка: {error_msg2}")
     
     def open_page(self, url):
         """Открытие страницы с умным ожиданием полной загрузки"""
